@@ -3,12 +3,16 @@ import { useAuth } from "./context/AuthContext";
 
 // Pages
 import Login from "./pages/Login";
-import Generic from "./pages/Generic";
 import Register from "./pages/Register";
 import Dashboard from "./pages/Dashboard";
+import ProfilePage from "./pages/ProfilePage"; // NEW - Add this import
 import ForgotPassword from "./pages/ForgotPassword";
 import ResetPassword from "./pages/ResetPassword";
+import CheckEmail from "./pages/CheckEmail";
+import AuthConfirm from "./pages/AuthConfirm";
+import AuthCallback from "./pages/AuthCallback";
 import { ToastContainer } from "react-toastify";
+import "react-toastify/dist/ReactToastify.css";
 
 // Loading screen component
 function LoadingScreen() {
@@ -66,10 +70,6 @@ function App() {
         draggable
         pauseOnHover
         theme="light"
-        // You can customize further:
-        // className="custom-toast-container"
-        // toastClassName="custom-toast"
-        // bodyClassName="custom-toast-body"
       />
       <BrowserRouter>
         <Routes>
@@ -99,6 +99,11 @@ function App() {
             }
           />
 
+          {/* Email Verification Routes */}
+          <Route path="/auth/check-email" element={<CheckEmail />} />
+          <Route path="/auth/confirm" element={<AuthConfirm />} />
+          <Route path="/auth/callback" element={<AuthCallback />} />
+
           {/* Reset password can be accessed by anyone with valid token */}
           <Route path="/reset-password" element={<ResetPassword />} />
 
@@ -108,6 +113,16 @@ function App() {
             element={
               <ProtectedRoute>
                 <Dashboard />
+              </ProtectedRoute>
+            }
+          />
+
+          {/* NEW - Profile Route */}
+          <Route
+            path="/profile"
+            element={
+              <ProtectedRoute>
+                <ProfilePage />
               </ProtectedRoute>
             }
           />
@@ -134,7 +149,7 @@ function App() {
             }
           />
         </Routes>
-      </BrowserRouter>{" "}
+      </BrowserRouter>
     </>
   );
 }

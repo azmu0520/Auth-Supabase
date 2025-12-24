@@ -3,6 +3,9 @@ export interface User {
   email: string;
   user_metadata: Record<string, any>;
   app_metadata: Record<string, any>;
+  email_confirmed_at?: string;
+  created_at?: string;
+  last_sign_in_at?: string;
 }
 
 export interface AuthState {

@@ -49,7 +49,7 @@ export default function ResetPassword() {
       try {
         const { data, error } = await supabase.auth.getSession();
 
-        if (error || !data.session) {
+        if (error) {
           setIsValidToken(false);
           setServerError(
             "Invalid or expired reset link. Please request a new one."

@@ -16,13 +16,25 @@ const mapSupabaseUser = (supabaseUser: SupabaseUser | null): User | null => {
   };
 };
 
+// Add these to your AuthContextType interface
 interface AuthContextType extends AuthState {
-  login: (email: string, password: string) => Promise<void>;
-  register: (email: string, password: string) => Promise<void>;
+  login: (
+    email: string,
+    password: string
+  ) => Promise<{ needsVerification: boolean }>;
+  register: (
+    email: string,
+    password: string
+  ) => Promise<{ needsVerification: boolean; email: string }>;
   logout: () => Promise<void>;
   resetPassword: (email: string) => Promise<void>;
-}
+  resendVerificationEmail: (email: string) => Promise<void>;
 
+  // ADD THESE NEW METHODS ⬇️
+  updateUserPassword: (newPassword: string) => Promise<void>;
+  updateUserEmail: (newEmail: string) => Promise<void>;
+  deleteUserAccount: () => Promise<void>;
+}
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 type AuthAction =
@@ -105,6 +117,79 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     };
   }, []);
 
+  const updateUserPassword = async (newPassword: string) => {
+    const toastId = showLoading("Updating password...");
+    try {
+      const { error } = await supabase.auth.updateUser({
+        password: newPassword,
+      });
+
+      if (error) {
+        updateToast(toastId, "error", error.message);
+        throw error;
+      }
+
+      updateToast(toastId, "success", "Password updated successfully!");
+    } catch (error: any) {
+      showError(error, "Failed to update password.");
+      throw error;
+    }
+  };
+
+  const updateUserEmail = async (newEmail: string) => {
+    const toastId = showLoading("Updating email...");
+    try {
+      const { error } = await supabase.auth.updateUser(
+        {
+          email: newEmail,
+        },
+        {
+          emailRedirectTo: `${window.location.origin}/auth/confirm`,
+        }
+      );
+
+      if (error) {
+        updateToast(toastId, "error", error.message);
+        throw error;
+      }
+
+      updateToast(
+        toastId,
+        "success",
+        "Verification email sent! Check your inbox to confirm the change."
+      );
+    } catch (error: any) {
+      showError(error, "Failed to update email.");
+      throw error;
+    }
+  };
+
+  const deleteUserAccount = async () => {
+    const toastId = showLoading("Deleting account...");
+    try {
+      // Note: Supabase doesn't have a direct client-side delete method
+      // You need to either:
+      // 1. Create a Supabase Edge Function
+      // 2. Use the Management API server-side
+      // 3. Just sign out (soft delete - data remains but inaccessible)
+
+      // For now, we'll implement soft delete (sign out)
+      const { error } = await supabase.auth.signOut();
+
+      if (error) {
+        updateToast(toastId, "error", error.message);
+        throw error;
+      }
+
+      dispatch({ type: "SET_USER", payload: null });
+      dispatch({ type: "SET_SESSION", payload: null });
+
+      updateToast(toastId, "success", "Account deleted successfully!");
+    } catch (error: any) {
+      showError(error, "Failed to delete account.");
+      throw error;
+    }
+  };
   const login = async (email: string, password: string) => {
     const toastId = showLoading("Logging in...");
     try {
@@ -121,22 +206,28 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         throw error;
       }
 
+      // Check if email is confirmed
+      if (data.user && !data.user.email_confirmed_at) {
+        updateToast(
+          toastId,
+          "error",
+          "Please verify your email before logging in."
+        );
+        // Log them out immediately
+        await supabase.auth.signOut();
+        return { needsVerification: true };
+      }
+
       dispatch({ type: "SET_USER", payload: mapSupabaseUser(data?.user) });
       dispatch({ type: "SET_SESSION", payload: data?.session });
 
-      if (data.user?.identities?.length === 0) {
-        updateToast(
-          toastId,
-          "info",
-          "Check your email to confirm your account!"
-        );
-      } else {
-        updateToast(
-          toastId,
-          "success",
-          `Welcome back, ${data.user?.email?.split("@")[0] || "User"}!`
-        );
-      }
+      updateToast(
+        toastId,
+        "success",
+        `Welcome back, ${data.user?.email?.split("@")[0] || "User"}!`
+      );
+
+      return { needsVerification: false };
     } catch (error: any) {
       dispatch({ type: "SET_ERROR", payload: error.message });
       throw error;
@@ -154,6 +245,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       const { data, error } = await supabase.auth.signUp({
         email,
         password,
+        options: {
+          emailRedirectTo: `${window.location.origin}/auth/confirm`,
+        },
       });
 
       if (error) {
@@ -161,18 +255,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         throw error;
       }
 
-      // Note: If email confirmation is enabled, user won't be logged in yet
-      dispatch({ type: "SET_USER", payload: mapSupabaseUser(data?.user) });
-      dispatch({ type: "SET_SESSION", payload: data?.session });
+      // Check if email confirmation is required
+      // When email confirmation is enabled, identities will be empty until confirmed
+      const needsVerification =
+        !data.session || data.user?.identities?.length === 0;
 
-      if (data.user?.identities?.length === 0) {
+      if (needsVerification) {
         updateToast(
           toastId,
-          "info",
-          "Check your email to confirm your account!"
+          "success",
+          "Account created! Check your email to verify."
         );
+        return { needsVerification: true, email };
       } else {
+        // Auto-login if email confirmation is disabled
+        dispatch({ type: "SET_USER", payload: mapSupabaseUser(data?.user) });
+        dispatch({ type: "SET_SESSION", payload: data?.session });
         updateToast(toastId, "success", "Account created successfully!");
+        return { needsVerification: false, email };
       }
     } catch (error: any) {
       showError(error, "Registration failed. Please try again.");
@@ -234,12 +334,43 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   };
 
+  const resendVerificationEmail = async (email: string) => {
+    const toastId = showLoading("Resending verification email...");
+    try {
+      const { error } = await supabase.auth.resend({
+        type: "signup",
+        email: email,
+        options: {
+          emailRedirectTo: `${window.location.origin}/auth/confirm`,
+        },
+      });
+
+      if (error) {
+        updateToast(toastId, "error", error.message);
+        throw error;
+      }
+
+      updateToast(
+        toastId,
+        "success",
+        "Verification email sent! Check your inbox."
+      );
+    } catch (error: any) {
+      showError(error, "Failed to resend verification email.");
+      throw error;
+    }
+  };
+
   const value: AuthContextType = {
     ...state,
     login,
     register,
     logout,
     resetPassword,
+    resendVerificationEmail,
+    updateUserPassword,
+    updateUserEmail,
+    deleteUserAccount,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

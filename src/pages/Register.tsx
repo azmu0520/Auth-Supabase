@@ -5,6 +5,7 @@ import { useNavigate, Link } from "react-router-dom";
 import { Eye, EyeOff, Loader2, CheckCircle2, XCircle } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { registerSchema, type RegisterFormData } from "../utils/validation";
+import GitHubOAuthButton from "../components/GitHubOAuthButton";
 
 export default function Register() {
   const [showPassword, setShowPassword] = useState(false);
@@ -48,8 +49,16 @@ export default function Register() {
   const onSubmit = async (data: RegisterFormData) => {
     try {
       setServerError(null);
-      await registerUser(data.email, data.password);
-      navigate("/dashboard");
+      const result = await registerUser(data.email, data.password);
+
+      if (result.needsVerification) {
+        navigate("/auth/check-email", {
+          state: { email: result.email },
+          replace: true,
+        });
+      } else {
+        navigate("/dashboard");
+      }
     } catch (error: any) {
       setServerError(error.message || "Failed to create account");
     }
@@ -268,6 +277,23 @@ export default function Register() {
                 "Create Account"
               )}
             </button>
+            <div className="mt-6">
+              <div className="relative mb-4">
+                <div className="absolute inset-0 flex items-center">
+                  <div className="w-full border-t border-gray-300"></div>
+                </div>
+                <div className="relative flex justify-center text-sm">
+                  <span className="px-2 bg-white text-gray-500">
+                    Or continue with
+                  </span>
+                </div>
+              </div>
+
+              <GitHubOAuthButton
+                mode="signup"
+                onError={(error) => setServerError(error)}
+              />
+            </div>
           </form>
 
           {/* Divider */}
