@@ -34,6 +34,9 @@ interface AuthContextType extends AuthState {
   updateUserPassword: (newPassword: string) => Promise<void>;
   updateUserEmail: (newEmail: string) => Promise<void>;
   deleteUserAccount: () => Promise<void>;
+  verifyEnrollment: (code: string) => Promise<boolean>;
+  unenrollMFA: () => Promise<boolean>;
+  getMFAStatus: () => Promise<{ enrolled: boolean; factorId?: string }>;
 }
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
@@ -136,6 +139,66 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   };
 
+  const verifyEnrollment = async (code: string) => {
+    try {
+      const factors = await supabase.auth.mfa.listFactors();
+      if (factors.error) throw factors.error;
+
+      const totpFactor = factors.data.totp[0];
+      if (!totpFactor) throw new Error("No TOTP factor found");
+
+      const challenge = await supabase.auth.mfa.challenge({
+        factorId: totpFactor.id,
+      });
+      if (challenge.error) throw challenge.error;
+
+      const verify = await supabase.auth.mfa.verify({
+        factorId: totpFactor.id,
+        challengeId: challenge.data.id,
+        code,
+      });
+
+      return !verify.error;
+    } catch (error) {
+      console.error("MFA verification error:", error);
+      return false;
+    }
+  };
+
+  const unenrollMFA = async () => {
+    try {
+      const factors = await supabase.auth.mfa.listFactors();
+      if (factors.error) throw factors.error;
+
+      const totpFactor = factors.data.totp[0];
+      if (!totpFactor) return true;
+
+      const { error } = await supabase.auth.mfa.unenroll({
+        factorId: totpFactor.id,
+      });
+
+      return !error;
+    } catch (error) {
+      console.error("MFA unenroll error:", error);
+      return false;
+    }
+  };
+
+  const getMFAStatus = async () => {
+    try {
+      const { data, error } = await supabase.auth.mfa.listFactors();
+      if (error) throw error;
+
+      const totpFactor = data.totp[0];
+      return {
+        enrolled: !!totpFactor && totpFactor.status === "verified",
+        factorId: totpFactor?.id,
+      };
+    } catch (error) {
+      console.error("Get MFA status error:", error);
+      return { enrolled: false };
+    }
+  };
   const updateUserEmail = async (newEmail: string) => {
     const toastId = showLoading("Updating email...");
     try {
@@ -371,6 +434,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     updateUserPassword,
     updateUserEmail,
     deleteUserAccount,
+    verifyEnrollment,
+    unenrollMFA,
+    getMFAStatus,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

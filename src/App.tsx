@@ -5,7 +5,7 @@ import { useAuth } from "./context/AuthContext";
 import Login from "./pages/Login";
 import Register from "./pages/Register";
 import Dashboard from "./pages/Dashboard";
-import ProfilePage from "./pages/ProfilePage"; // NEW - Add this import
+import ProfilePage from "./pages/Profile/ProfilePage"; // NEW - Add this import
 import ForgotPassword from "./pages/ForgotPassword";
 import ResetPassword from "./pages/ResetPassword";
 import CheckEmail from "./pages/CheckEmail";
