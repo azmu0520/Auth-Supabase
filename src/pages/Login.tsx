@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useNavigate, Link } from "react-router-dom";
@@ -6,11 +6,16 @@ import { Eye, EyeOff, Loader2 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { loginSchema, type LoginFormData } from "../utils/validation";
 import GitHubOAuthButton from "../components/GitHubOAuthButton";
+import { MFAVerification } from "../components/MFAVerification";
+import { supabase } from "../lib/supabase";
 
 export default function Login() {
   const [showPassword, setShowPassword] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
-  const { login, isLoading } = useAuth();
+  const [needsMFA, setNeedsMFA] = useState(false);
+  const [mfaFactorId, setMfaFactorId] = useState<string | null>(null);
+
+  const { login, isLoading, completeMFALogin } = useAuth();
   const navigate = useNavigate();
 
   const {
@@ -24,22 +29,72 @@ export default function Login() {
   const onSubmit = async (data: LoginFormData) => {
     try {
       setServerError(null);
-      const result = await login(data.email, data.password);
 
+      const result = await login(data.email, data.password);
+      console.log("Login result:", result);
+
+      // Check if email verification needed
       if (result.needsVerification) {
         navigate("/auth/check-email", {
           state: { email: data.email },
           replace: true,
         });
-      } else {
-        navigate("/dashboard");
+        return;
       }
+
+      // ✅ Check if MFA is needed (returned from login function)
+      if (result.needsMFA && result.factorId) {
+        console.log("🔐 MFA required - showing verification screen");
+        setMfaFactorId(result.factorId);
+        setNeedsMFA(true);
+        // Don't navigate! Let the component re-render and show MFA screen
+        return;
+      }
+
+      // ✅ No MFA needed - user is fully logged in, navigate to dashboard
+      console.log("✅ Login complete - navigating to dashboard");
     } catch (error: any) {
-      console.log(error, "ppp");
+      console.error("Login error:", error);
       setServerError(error.message || "Invalid email or password");
     }
   };
+  const handleMFASuccess = async () => {
+    try {
+      // Complete the login process
+      await completeMFALogin();
+
+      // Now navigate to dashboard
+      navigate("/dashboard");
+    } catch (error: any) {
+      console.error("Failed to complete MFA login:", error);
+      setServerError("Failed to complete login. Please try again.");
+      setNeedsMFA(false);
+      setMfaFactorId(null);
+    }
+  };
+
+  const handleMFABack = () => {
+    // User wants to go back to login form
+    setNeedsMFA(false);
+    setMfaFactorId(null);
+    setServerError(null);
+
+    // Sign out to clear the session
+    supabase.auth.signOut();
+  };
+
   const isFormLoading = isSubmitting || isLoading;
+  if (needsMFA && mfaFactorId) {
+    return (
+      <MFAVerification
+        factorId={mfaFactorId}
+        onSuccess={handleMFASuccess}
+        onBack={handleMFABack}
+      />
+    );
+  }
+
+  console.log(needsMFA, mfaFactorId, "ppppppppppppp");
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100 px-4">
@@ -156,6 +211,8 @@ export default function Login() {
                 "Sign In"
               )}
             </button>
+
+            {/* OAuth Section */}
             <div className="mt-6">
               <div className="relative mb-4">
                 <div className="absolute inset-0 flex items-center">

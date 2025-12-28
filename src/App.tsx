@@ -13,6 +13,8 @@ import AuthConfirm from "./pages/AuthConfirm";
 import AuthCallback from "./pages/AuthCallback";
 import { ToastContainer } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
+import { Settings } from "./pages/Settings";
+import MFAVerifyPage from "./pages/MfaVerificationPage";
 
 // Loading screen component
 function LoadingScreen() {
@@ -71,85 +73,93 @@ function App() {
         pauseOnHover
         theme="light"
       />
-      <BrowserRouter>
-        <Routes>
-          {/* Public Routes - Redirect to dashboard if logged in */}
-          <Route
-            path="/login"
-            element={
-              <PublicRoute>
-                <Login />
-              </PublicRoute>
-            }
-          />
-          <Route
-            path="/register"
-            element={
-              <PublicRoute>
-                <Register />
-              </PublicRoute>
-            }
-          />
-          <Route
-            path="/forgot-password"
-            element={
-              <PublicRoute>
-                <ForgotPassword />
-              </PublicRoute>
-            }
-          />
 
-          {/* Email Verification Routes */}
-          <Route path="/auth/check-email" element={<CheckEmail />} />
-          <Route path="/auth/confirm" element={<AuthConfirm />} />
-          <Route path="/auth/callback" element={<AuthCallback />} />
+      <Routes>
+        {/* Public Routes - Redirect to dashboard if logged in */}
+        <Route
+          path="/login"
+          element={
+            <PublicRoute>
+              <Login />
+            </PublicRoute>
+          }
+        />
+        <Route path="/mfa-verify" element={<MFAVerifyPage />} />
+        <Route
+          path="/register"
+          element={
+            <PublicRoute>
+              <Register />
+            </PublicRoute>
+          }
+        />
+        <Route
+          path="/forgot-password"
+          element={
+            <PublicRoute>
+              <ForgotPassword />
+            </PublicRoute>
+          }
+        />
 
-          {/* Reset password can be accessed by anyone with valid token */}
-          <Route path="/reset-password" element={<ResetPassword />} />
+        {/* Email Verification Routes */}
+        <Route path="/auth/check-email" element={<CheckEmail />} />
+        <Route path="/auth/confirm" element={<AuthConfirm />} />
+        <Route path="/auth/callback" element={<AuthCallback />} />
 
-          {/* Protected Routes - Require authentication */}
-          <Route
-            path="/dashboard"
-            element={
-              <ProtectedRoute>
-                <Dashboard />
-              </ProtectedRoute>
-            }
-          />
+        {/* Reset password can be accessed by anyone with valid token */}
+        <Route path="/reset-password" element={<ResetPassword />} />
 
-          {/* NEW - Profile Route */}
-          <Route
-            path="/profile"
-            element={
-              <ProtectedRoute>
-                <ProfilePage />
-              </ProtectedRoute>
-            }
-          />
+        {/* Protected Routes - Require authentication */}
+        <Route
+          path="/dashboard"
+          element={
+            <ProtectedRoute>
+              <Dashboard />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/settings"
+          element={
+            <ProtectedRoute>
+              <Settings />
+            </ProtectedRoute>
+          }
+        />
 
-          {/* Default redirect */}
-          <Route path="/" element={<Navigate to="/dashboard" replace />} />
+        {/* NEW - Profile Route */}
+        <Route
+          path="/profile"
+          element={
+            <ProtectedRoute>
+              <ProfilePage />
+            </ProtectedRoute>
+          }
+        />
 
-          {/* 404 - Not Found */}
-          <Route
-            path="*"
-            element={
-              <div className="min-h-screen flex items-center justify-center bg-gray-50">
-                <div className="text-center">
-                  <h1 className="text-6xl font-bold text-gray-900 mb-4">404</h1>
-                  <p className="text-xl text-gray-600 mb-8">Page not found</p>
-                  <a
-                    href="/dashboard"
-                    className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
-                  >
-                    Go to Dashboard
-                  </a>
-                </div>
+        {/* Default redirect */}
+        <Route path="/" element={<Navigate to="/dashboard" replace />} />
+
+        {/* 404 - Not Found */}
+        <Route
+          path="*"
+          element={
+            <div className="min-h-screen flex items-center justify-center bg-gray-50">
+              <div className="text-center">
+                <h1 className="text-6xl font-bold text-gray-900 mb-4">404</h1>
+                <p className="text-xl text-gray-600 mb-8">Page not found</p>
+                <a
+                  href="/dashboard"
+                  className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
+                >
+                  Go to Dashboard
+                </a>
               </div>
-            }
-          />
-        </Routes>
-      </BrowserRouter>
+            </div>
+          }
+        />
+      </Routes>
     </>
   );
 }

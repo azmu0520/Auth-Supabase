@@ -1,8 +1,23 @@
-import React, { createContext, useContext, useEffect, useReducer } from "react";
+import React, {
+  createContext,
+  useContext,
+  useEffect,
+  useReducer,
+  useState,
+} from "react";
 import { supabase } from "../lib/supabase";
 import type { User, AuthState } from "../types/auth";
 import type { User as SupabaseUser } from "@supabase/supabase-js";
 import { showError, showLoading, updateToast } from "../utils/toastUtils";
+import { useSessionSync } from "../hooks/useSession";
+import {
+  createSession,
+  updateSessionActivity,
+  logActivity,
+  deleteSession,
+  deleteOtherSessions,
+} from "../utils/security";
+import { useNavigate } from "react-router-dom";
 
 // Helper function to map Supabase user to your custom User type
 const mapSupabaseUser = (supabaseUser: SupabaseUser | null): User | null => {
@@ -16,12 +31,16 @@ const mapSupabaseUser = (supabaseUser: SupabaseUser | null): User | null => {
   };
 };
 
-// Add these to your AuthContextType interface
+// Enhanced AuthContextType interface
 interface AuthContextType extends AuthState {
   login: (
     email: string,
     password: string
-  ) => Promise<{ needsVerification: boolean }>;
+  ) => Promise<{
+    needsVerification: boolean;
+    needsMFA?: boolean; // ← Add this
+    factorId?: string;
+  }>;
   register: (
     email: string,
     password: string
@@ -29,22 +48,27 @@ interface AuthContextType extends AuthState {
   logout: () => Promise<void>;
   resetPassword: (email: string) => Promise<void>;
   resendVerificationEmail: (email: string) => Promise<void>;
-
-  // ADD THESE NEW METHODS ⬇️
   updateUserPassword: (newPassword: string) => Promise<void>;
   updateUserEmail: (newEmail: string) => Promise<void>;
   deleteUserAccount: () => Promise<void>;
+  completeMFALogin: () => Promise<void>;
   verifyEnrollment: (code: string) => Promise<boolean>;
   unenrollMFA: () => Promise<boolean>;
   getMFAStatus: () => Promise<{ enrolled: boolean; factorId?: string }>;
+
+  // Phase 3 additions
+  currentSessionId: string | null;
+  signOutAllOtherSessions: () => Promise<void>;
 }
+
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 type AuthAction =
   | { type: "SET_USER"; payload: User | null }
   | { type: "SET_SESSION"; payload: any | null }
   | { type: "SET_LOADING"; payload: boolean }
-  | { type: "SET_ERROR"; payload: string | null };
+  | { type: "SET_ERROR"; payload: string | null }
+  | { type: "SET_SESSION_ID"; payload: string | null };
 
 const authReducer = (state: AuthState, action: AuthAction): AuthState => {
   switch (action.type) {
@@ -69,7 +93,7 @@ const initialState: AuthState = {
   user: null,
   session: null,
   isAuthenticated: false,
-  isLoading: true,
+  isLoading: false,
   error: null,
 };
 
@@ -77,6 +101,50 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) => {
   const [state, dispatch] = useReducer(authReducer, initialState);
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const navigate = useNavigate();
+  // Multi-tab synchronization
+  const { broadcast } = useSessionSync((message: any) => {
+    if (message.type === "LOGOUT") {
+      // Another tab logged out, update state
+      dispatch({ type: "SET_USER", payload: null });
+      dispatch({ type: "SET_SESSION", payload: null });
+      setCurrentSessionId(null);
+    } else if (message.type === "LOGIN") {
+      // Another tab logged in, refresh session
+      refreshSession();
+    }
+  });
+
+  // Refresh session helper
+  const refreshSession = async () => {
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (session) {
+        dispatch({ type: "SET_SESSION", payload: session });
+        dispatch({
+          type: "SET_USER",
+          payload: mapSupabaseUser(session?.user || null),
+        });
+      }
+    } catch (error) {
+      console.error("Error refreshing session:", error);
+    }
+  };
+
+  // Update session activity periodically
+  useEffect(() => {
+    if (!currentSessionId) return;
+
+    const interval = setInterval(() => {
+      updateSessionActivity(currentSessionId);
+    }, 60000); // Update every minute
+
+    return () => clearInterval(interval);
+  }, [currentSessionId]);
 
   useEffect(() => {
     // Get initial session
@@ -91,6 +159,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
           type: "SET_USER",
           payload: mapSupabaseUser(session?.user || null),
         });
+
+        // Create session tracking if user is logged in
+        if (session?.user) {
+          const sessionData = await createSession(session.user.id);
+          if (sessionData) {
+            setCurrentSessionId(sessionData.id);
+          }
+        }
       } catch (error) {
         console.error("Error getting session:", error);
         dispatch({ type: "SET_ERROR", payload: "Failed to get session" });
@@ -102,19 +178,47 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     getSession();
 
     // Listen for auth state changes
+    // Listen for auth state changes
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((event, session) => {
-      console.log("Auth event:", event);
+    } = supabase.auth.onAuthStateChange(async (event, session) => {
+      console.log("Auth event:", event, "Session:", !!session);
 
-      dispatch({ type: "SET_SESSION", payload: session });
-      dispatch({
-        type: "SET_USER",
-        payload: mapSupabaseUser(session?.user || null),
-      });
+      // ✅ Simple rule: Just mirror Supabase's auth state to your React state
+      // Don't add business logic here (like MFA checks) - handle that in your login/register functions
+
+      if (event === "SIGNED_IN" && session?.user) {
+        dispatch({ type: "SET_SESSION", payload: session });
+        dispatch({
+          type: "SET_USER",
+          payload: mapSupabaseUser(session.user),
+        });
+
+        // Create session tracking
+        const sessionData = await createSession(session.user.id);
+        if (sessionData) {
+          setCurrentSessionId(sessionData.id);
+        }
+        await logActivity(session.user.id, "login");
+      } else if (event === "SIGNED_OUT") {
+        dispatch({ type: "SET_SESSION", payload: null });
+        dispatch({ type: "SET_USER", payload: null });
+
+        if (currentSessionId) {
+          await deleteSession(currentSessionId);
+          setCurrentSessionId(null);
+        }
+      } else if (event === "TOKEN_REFRESHED" && session) {
+        // Session was refreshed, update it
+        dispatch({ type: "SET_SESSION", payload: session });
+      } else if (event === "USER_UPDATED" && session) {
+        // User metadata updated
+        dispatch({ type: "SET_USER", payload: mapSupabaseUser(session.user) });
+      }
+
+      // Always set loading to false after handling any event
       dispatch({ type: "SET_LOADING", payload: false });
     });
-
     return () => {
       subscription.unsubscribe();
     };
@@ -130,6 +234,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       if (error) {
         updateToast(toastId, "error", error.message);
         throw error;
+      }
+
+      // Log password change activity
+      if (state.user) {
+        await logActivity(state.user.id, "password_change");
       }
 
       updateToast(toastId, "success", "Password updated successfully!");
@@ -158,6 +267,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         code,
       });
 
+      // Log MFA enabled activity
+      if (!verify.error && state.user) {
+        await logActivity(state.user.id, "mfa_enabled");
+      }
+
       return !verify.error;
     } catch (error) {
       console.error("MFA verification error:", error);
@@ -176,6 +290,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       const { error } = await supabase.auth.mfa.unenroll({
         factorId: totpFactor.id,
       });
+
+      // Log MFA disabled activity
+      if (!error && state.user) {
+        await logActivity(state.user.id, "mfa_disabled");
+      }
 
       return !error;
     } catch (error) {
@@ -199,6 +318,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       return { enrolled: false };
     }
   };
+
   const updateUserEmail = async (newEmail: string) => {
     const toastId = showLoading("Updating email...");
     try {
@@ -216,6 +336,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         throw error;
       }
 
+      // Log profile update activity
+      if (state.user) {
+        await logActivity(state.user.id, "profile_update", {
+          field: "email",
+          newValue: newEmail,
+        });
+      }
+
       updateToast(
         toastId,
         "success",
@@ -230,13 +358,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   const deleteUserAccount = async () => {
     const toastId = showLoading("Deleting account...");
     try {
-      // Note: Supabase doesn't have a direct client-side delete method
-      // You need to either:
-      // 1. Create a Supabase Edge Function
-      // 2. Use the Management API server-side
-      // 3. Just sign out (soft delete - data remains but inaccessible)
+      // Log account deletion before signing out
+      if (state.user) {
+        await logActivity(state.user.id, "logout", {
+          reason: "account_deletion",
+        });
+      }
 
-      // For now, we'll implement soft delete (sign out)
+      // Delete current session
+      if (currentSessionId) {
+        await deleteSession(currentSessionId);
+      }
+
+      // Sign out
       const { error } = await supabase.auth.signOut();
 
       if (error) {
@@ -246,6 +380,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
 
       dispatch({ type: "SET_USER", payload: null });
       dispatch({ type: "SET_SESSION", payload: null });
+      setCurrentSessionId(null);
+
+      // Broadcast to other tabs
+      broadcast({ type: "LOGOUT" });
 
       updateToast(toastId, "success", "Account deleted successfully!");
     } catch (error: any) {
@@ -253,6 +391,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       throw error;
     }
   };
+
   const login = async (email: string, password: string) => {
     const toastId = showLoading("Logging in...");
     try {
@@ -265,6 +404,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       });
 
       if (error) {
+        await logActivity("unknown", "failed_login", {
+          email,
+          error: error.message,
+        });
         updateToast(toastId, "error", error.message);
         throw error;
       }
@@ -276,13 +419,48 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
           "error",
           "Please verify your email before logging in."
         );
-        // Log them out immediately
         await supabase.auth.signOut();
         return { needsVerification: true };
       }
 
+      // ✅ CHECK FOR MFA BEFORE SETTING USER
+      if (data.user) {
+        const { data: factors } = await supabase.auth.mfa.listFactors();
+        const hasMFA = factors?.totp?.some((f) => f.status === "verified");
+
+        if (hasMFA) {
+          console.log("🔐 MFA detected - NOT setting user yet");
+
+          // Don't set user or session yet!
+          // Don't show success toast yet!
+          // Just return that MFA is needed
+
+          dispatch({ type: "SET_LOADING", payload: false });
+          navigate("mfa-verify");
+          return {
+            needsVerification: false,
+            needsMFA: true, // ← Add this flag
+          };
+        }
+      }
+
+      // ✅ Only set user if NO MFA required
+      console.log("✅ No MFA required - setting user normally");
+
       dispatch({ type: "SET_USER", payload: mapSupabaseUser(data?.user) });
       dispatch({ type: "SET_SESSION", payload: data?.session });
+
+      // Create session tracking
+      if (data.user) {
+        const sessionData = await createSession(data.user.id);
+        if (sessionData) {
+          setCurrentSessionId(sessionData.id);
+        }
+        await logActivity(data.user.id, "login");
+      }
+
+      // Broadcast login to other tabs
+      broadcast({ type: "LOGIN" });
 
       updateToast(
         toastId,
@@ -296,6 +474,44 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       throw error;
     } finally {
       dispatch({ type: "SET_LOADING", payload: false });
+    }
+  };
+
+  const completeMFALogin = async () => {
+    const toastId = showLoading("Completing login...");
+
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!session?.user) {
+        throw new Error("No session found");
+      }
+
+      // Now set the user/session
+      dispatch({ type: "SET_SESSION", payload: session });
+      dispatch({
+        type: "SET_USER",
+        payload: mapSupabaseUser(session.user),
+      });
+
+      // Create session tracking
+      const sessionData = await createSession(session.user.id);
+      if (sessionData) {
+        setCurrentSessionId(sessionData.id);
+      }
+
+      // Log login activity
+      await logActivity(session.user.id, "login");
+
+      // Broadcast to other tabs
+      broadcast({ type: "LOGIN" });
+
+      updateToast(toastId, "success", `Welcome back!`);
+    } catch (error: any) {
+      updateToast(toastId, "error", error.message);
+      throw error;
     }
   };
 
@@ -319,7 +535,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       }
 
       // Check if email confirmation is required
-      // When email confirmation is enabled, identities will be empty until confirmed
       const needsVerification =
         !data.session || data.user?.identities?.length === 0;
 
@@ -334,6 +549,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         // Auto-login if email confirmation is disabled
         dispatch({ type: "SET_USER", payload: mapSupabaseUser(data?.user) });
         dispatch({ type: "SET_SESSION", payload: data?.session });
+
+        // Create session tracking
+        if (data.user) {
+          const sessionData = await createSession(data.user.id);
+          if (sessionData) {
+            setCurrentSessionId(sessionData.id);
+          }
+
+          // Log registration
+          await logActivity(data.user.id, "login", {
+            type: "registration",
+          });
+        }
+
         updateToast(toastId, "success", "Account created successfully!");
         return { needsVerification: false, email };
       }
@@ -350,8 +579,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     const toastId = showLoading("Logging out...");
 
     try {
+      console.log("LOGINNNNNNNN");
+
       dispatch({ type: "SET_LOADING", payload: true });
       dispatch({ type: "SET_ERROR", payload: null });
+
+      const userId = state.user?.id;
+
+      // Log logout activity
+      if (userId) {
+        await logActivity(userId, "logout");
+      }
+
+      // Delete current session
+      if (currentSessionId) {
+        await deleteSession(currentSessionId);
+        setCurrentSessionId(null);
+      }
 
       const { error } = await supabase.auth.signOut();
 
@@ -359,8 +603,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         updateToast(toastId, "error", error.message);
         throw error;
       }
+
       dispatch({ type: "SET_USER", payload: null });
       dispatch({ type: "SET_SESSION", payload: null });
+
+      // Broadcast logout to other tabs
+      broadcast({ type: "LOGOUT" });
+
       updateToast(toastId, "success", "Logged out successfully!");
     } catch (error: any) {
       dispatch({ type: "SET_ERROR", payload: error.message });
@@ -424,6 +673,27 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   };
 
+  const signOutAllOtherSessions = async () => {
+    const toastId = showLoading("Signing out other sessions...");
+    try {
+      if (!state.user || !currentSessionId) {
+        throw new Error("No active session");
+      }
+
+      await deleteOtherSessions(state.user.id, currentSessionId);
+
+      // Log activity
+      await logActivity(state.user.id, "logout", {
+        type: "all_other_sessions",
+      });
+
+      updateToast(toastId, "success", "All other sessions signed out!");
+    } catch (error: any) {
+      updateToast(toastId, "error", "Failed to sign out other sessions");
+      throw error;
+    }
+  };
+
   const value: AuthContextType = {
     ...state,
     login,
@@ -437,6 +707,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     verifyEnrollment,
     unenrollMFA,
     getMFAStatus,
+    currentSessionId,
+    signOutAllOtherSessions,
+    completeMFALogin,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

@@ -20,7 +20,7 @@ import ProfileHeader from "./ProfileHeader";
 import ProfileTabs from "./ProfileTabs";
 import ProfileFormTab from "./ProfileFormTab";
 import SecurityTab from "./SecurityTab";
-import MFATab from "./MFATab";
+import { MFATab } from "./MFATab";
 import DangerZoneTab from "./DangerZoneTab";
 import ConfirmationModal from "./ConfirmationModal";
 import { showLoading, updateToast } from "../../utils/toastUtils";
@@ -40,7 +40,7 @@ export default function ProfilePage() {
 
   // MFA state
   const [mfaEnabled, setMfaEnabled] = useState(false);
-  const [mfaLoading, setMfaLoading] = useState(true);
+  const [mfaLoading, setMfaLoading] = useState(false);
   const [processing, setProcessing] = useState(false);
 
   // Extract user metadata
@@ -85,18 +85,6 @@ export default function ProfilePage() {
     emailForm,
     username,
   });
-
-  // Check MFA status on mount
-  useEffect(() => {
-    checkMFAStatus();
-  }, []);
-
-  const checkMFAStatus = async () => {
-    setMfaLoading(true);
-    const status = await getMFAStatus();
-    setMfaEnabled(status.enrolled);
-    setMfaLoading(false);
-  };
 
   const handleDisableMFA = async () => {
     setProcessing(true);
@@ -167,12 +155,12 @@ export default function ProfilePage() {
 
             {activeTab === "mfa" && (
               <MFATab
-                mfaEnabled={mfaEnabled}
-                mfaLoading={mfaLoading}
-                onEnableClick={() => {
-                  /* TODO: Implement MFA enrollment */
-                }}
-                onDisableClick={() => setShowDisableConfirm(true)}
+              // mfaEnabled={mfaEnabled}
+              // mfaLoading={mfaLoading}
+              // onEnableClick={() => {
+              //   /* TODO: Implement MFA enrollment */
+              // }}
+              // onDisableClick={() => setShowDisableConfirm(true)}
               />
             )}
 
