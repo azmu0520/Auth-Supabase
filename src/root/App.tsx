@@ -1,20 +1,21 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
-import { useAuth } from "./context/AuthContext";
+import { useAuth } from "../context/AuthContext";
 
 // Pages
-import Login from "./pages/Login";
-import Register from "./pages/Register";
-import Dashboard from "./pages/Dashboard";
-import ProfilePage from "./pages/Profile/ProfilePage"; // NEW - Add this import
-import ForgotPassword from "./pages/ForgotPassword";
-import ResetPassword from "./pages/ResetPassword";
-import CheckEmail from "./pages/CheckEmail";
-import AuthConfirm from "./pages/AuthConfirm";
-import AuthCallback from "./pages/AuthCallback";
+import Login from "../pages/Login";
+import Register from "../pages/Register";
+import Dashboard from "../pages/Dashboard";
+import ProfilePage from "../pages/Profile/ProfilePage"; // NEW - Add this import
+import ForgotPassword from "../pages/ForgotPassword";
+import ResetPassword from "../pages/ResetPassword";
+import CheckEmail from "../pages/CheckEmail";
+import AuthConfirm from "../pages/AuthConfirm";
+import AuthCallback from "../pages/AuthCallback";
 import { ToastContainer } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
-import { Settings } from "./pages/Settings";
-import MFAVerifyPage from "./pages/MfaVerificationPage";
+import { Settings } from "../pages/Settings";
+import MFAVerifyPage from "../pages/MfaVerificationPage";
+import { ProtectedRoute } from "./ProtectedRoute";
 
 // Loading screen component
 function LoadingScreen() {
@@ -26,21 +27,6 @@ function LoadingScreen() {
       </div>
     </div>
   );
-}
-
-// Protected Route wrapper
-function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated, isLoading } = useAuth();
-
-  if (isLoading) {
-    return <LoadingScreen />;
-  }
-
-  if (!isAuthenticated) {
-    return <Navigate to="/login" replace />;
-  }
-
-  return <>{children}</>;
 }
 
 // Public Route wrapper (redirect to dashboard if already logged in)

@@ -51,7 +51,7 @@ interface AuthContextType extends AuthState {
   updateUserPassword: (newPassword: string) => Promise<void>;
   updateUserEmail: (newEmail: string) => Promise<void>;
   deleteUserAccount: () => Promise<void>;
-  completeMFALogin: () => Promise<void>;
+  completeMFALogin: () => Promise<boolean>;
   verifyEnrollment: (code: string) => Promise<boolean>;
   unenrollMFA: () => Promise<boolean>;
   getMFAStatus: () => Promise<{ enrolled: boolean; factorId?: string }>;
@@ -179,13 +179,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
 
     // Listen for auth state changes
     // Listen for auth state changes
+    // Replace your onAuthStateChange listener with this:
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange(async (event, session) => {
-      console.log("Auth event:", event, "Session:", !!session);
-
-      // ✅ Simple rule: Just mirror Supabase's auth state to your React state
-      // Don't add business logic here (like MFA checks) - handle that in your login/register functions
+      // Don't do async operations here that could block
+      // Just update state based on what Supabase tells us
 
       if (event === "SIGNED_IN" && session?.user) {
         dispatch({ type: "SET_SESSION", payload: session });
@@ -193,32 +192,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
           type: "SET_USER",
           payload: mapSupabaseUser(session.user),
         });
-
-        // Create session tracking
-        const sessionData = await createSession(session.user.id);
-        if (sessionData) {
-          setCurrentSessionId(sessionData.id);
-        }
-        await logActivity(session.user.id, "login");
       } else if (event === "SIGNED_OUT") {
+        // Just clear state, don't do any async operations
         dispatch({ type: "SET_SESSION", payload: null });
         dispatch({ type: "SET_USER", payload: null });
-
-        if (currentSessionId) {
-          await deleteSession(currentSessionId);
-          setCurrentSessionId(null);
-        }
+        setCurrentSessionId(null);
       } else if (event === "TOKEN_REFRESHED" && session) {
-        // Session was refreshed, update it
         dispatch({ type: "SET_SESSION", payload: session });
       } else if (event === "USER_UPDATED" && session) {
-        // User metadata updated
+        dispatch({ type: "SET_USER", payload: mapSupabaseUser(session.user) });
+      } else if (event === "MFA_CHALLENGE_VERIFIED" && session) {
+        dispatch({ type: "SET_SESSION", payload: session });
         dispatch({ type: "SET_USER", payload: mapSupabaseUser(session.user) });
       }
 
-      // Always set loading to false after handling any event
+      // Always set loading to false
       dispatch({ type: "SET_LOADING", payload: false });
     });
+
     return () => {
       subscription.unsubscribe();
     };
@@ -395,19 +386,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   const login = async (email: string, password: string) => {
     const toastId = showLoading("Logging in...");
     try {
-      dispatch({ type: "SET_LOADING", payload: true });
-      dispatch({ type: "SET_ERROR", payload: null });
-
       const { data, error } = await supabase.auth.signInWithPassword({
         email,
         password,
       });
 
       if (error) {
-        await logActivity("unknown", "failed_login", {
-          email,
-          error: error.message,
-        });
         updateToast(toastId, "error", error.message);
         throw error;
       }
@@ -423,35 +407,33 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         return { needsVerification: true };
       }
 
-      // ✅ CHECK FOR MFA BEFORE SETTING USER
+      // Check for MFA
       if (data.user) {
         const { data: factors } = await supabase.auth.mfa.listFactors();
-        const hasMFA = factors?.totp?.some((f) => f.status === "verified");
+        const verifiedFactor = factors?.totp?.find(
+          (f) => f.status === "verified"
+        );
 
-        if (hasMFA) {
-          console.log("🔐 MFA detected - NOT setting user yet");
+        if (verifiedFactor) {
+          // ⚠️ IMPORTANT: DO NOT set user in context yet!
+          // User will be set after MFA verification in completeMFALogin()
 
-          // Don't set user or session yet!
-          // Don't show success toast yet!
-          // Just return that MFA is needed
+          updateToast(toastId, "info", "Please enter your 2FA code");
 
-          dispatch({ type: "SET_LOADING", payload: false });
-          navigate("mfa-verify");
           return {
             needsVerification: false,
-            needsMFA: true, // ← Add this flag
+            needsMFA: true,
+            factorId: verifiedFactor.id,
           };
         }
       }
 
-      // ✅ Only set user if NO MFA required
-      console.log("✅ No MFA required - setting user normally");
-
+      // No MFA - complete login immediately
       dispatch({ type: "SET_USER", payload: mapSupabaseUser(data?.user) });
       dispatch({ type: "SET_SESSION", payload: data?.session });
 
-      // Create session tracking
-      if (data.user) {
+      // Create session tracking (if you have this)
+      if (data.user && typeof createSession === "function") {
         const sessionData = await createSession(data.user.id);
         if (sessionData) {
           setCurrentSessionId(sessionData.id);
@@ -459,8 +441,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         await logActivity(data.user.id, "login");
       }
 
-      // Broadcast login to other tabs
-      broadcast({ type: "LOGIN" });
+      // Broadcast to other tabs
+      if (typeof broadcast === "function") {
+        broadcast({ type: "LOGIN" });
+      }
 
       updateToast(
         toastId,
@@ -478,8 +462,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   };
 
   const completeMFALogin = async () => {
-    const toastId = showLoading("Completing login...");
-
     try {
       const {
         data: { session },
@@ -489,28 +471,41 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         throw new Error("No session found");
       }
 
-      // Now set the user/session
+      // Check if MFA was actually verified (AAL2)
+      const { data: aalData } =
+        await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+      if (aalData?.currentLevel !== "aal2") {
+        throw new Error("MFA verification incomplete");
+      }
+
+      // NOW set user and session in context
       dispatch({ type: "SET_SESSION", payload: session });
       dispatch({
         type: "SET_USER",
         payload: mapSupabaseUser(session.user),
       });
 
-      // Create session tracking
-      const sessionData = await createSession(session.user.id);
-      if (sessionData) {
-        setCurrentSessionId(sessionData.id);
+      // Create session tracking (if you have this feature)
+      if (typeof createSession === "function") {
+        const sessionData = await createSession(session.user.id);
+        if (sessionData) {
+          setCurrentSessionId(sessionData.id);
+        }
       }
 
-      // Log login activity
-      await logActivity(session.user.id, "login");
+      // Log activity (if you have this feature)
+      if (typeof logActivity === "function") {
+        await logActivity(session.user.id, "login", { mfa: true });
+      }
 
-      // Broadcast to other tabs
-      broadcast({ type: "LOGIN" });
+      // Broadcast to other tabs (if you have this feature)
+      if (typeof broadcast === "function") {
+        broadcast({ type: "LOGIN" });
+      }
 
-      updateToast(toastId, "success", `Welcome back!`);
+      return true;
     } catch (error: any) {
-      updateToast(toastId, "error", error.message);
+      console.error("Complete MFA login error:", error);
       throw error;
     }
   };
@@ -579,24 +574,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     const toastId = showLoading("Logging out...");
 
     try {
-      console.log("LOGINNNNNNNN");
-
       dispatch({ type: "SET_LOADING", payload: true });
       dispatch({ type: "SET_ERROR", payload: null });
 
-      const userId = state.user?.id;
-
-      // Log logout activity
-      if (userId) {
-        await logActivity(userId, "logout");
-      }
-
-      // Delete current session
-      if (currentSessionId) {
-        await deleteSession(currentSessionId);
-        setCurrentSessionId(null);
-      }
-
+      // Just sign out from Supabase - that's it!
       const { error } = await supabase.auth.signOut();
 
       if (error) {
@@ -604,22 +585,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         throw error;
       }
 
+      // Clear local state
       dispatch({ type: "SET_USER", payload: null });
       dispatch({ type: "SET_SESSION", payload: null });
+      setCurrentSessionId(null);
 
-      // Broadcast logout to other tabs
+      // Broadcast to other tabs
       broadcast({ type: "LOGOUT" });
 
       updateToast(toastId, "success", "Logged out successfully!");
     } catch (error: any) {
       dispatch({ type: "SET_ERROR", payload: error.message });
-      showError(error, "Failed to logout. Please try again.");
+      updateToast(toastId, "error", "Failed to logout");
       throw error;
     } finally {
       dispatch({ type: "SET_LOADING", payload: false });
     }
   };
-
   const resetPassword = async (email: string) => {
     const toastId = showLoading("Sending reset email...");
     try {

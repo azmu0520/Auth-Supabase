@@ -1,3 +1,4 @@
+// src/pages/MfaVerificationPage.tsx
 import { useEffect, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { MFAVerification } from "../components/MFAVerification";
@@ -27,6 +28,17 @@ export default function MFAVerifyPage() {
           return;
         }
 
+        // Check current AAL (Authentication Assurance Level)
+        const { data: aalData } =
+          await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+
+        if (aalData?.currentLevel === "aal2") {
+          // Already verified - redirect to intended destination or dashboard
+          const from = (location.state as any)?.from?.pathname || "/dashboard";
+          navigate(from, { replace: true });
+          return;
+        }
+
         // Get MFA factors
         const { data: factors, error: factorsError } =
           await supabase.auth.mfa.listFactors();
@@ -40,7 +52,7 @@ export default function MFAVerifyPage() {
         );
 
         if (!verifiedFactor) {
-          // No MFA configured - user shouldn't be here
+          // No MFA configured - shouldn't be here
           navigate("/dashboard", { replace: true });
           return;
         }
@@ -55,12 +67,15 @@ export default function MFAVerifyPage() {
     };
 
     checkMFAStatus();
-  }, [navigate]);
+  }, [navigate, location]);
 
   const handleMFASuccess = async () => {
     try {
       await completeMFALogin();
-      navigate("/dashboard", { replace: true });
+
+      // Navigate to intended destination or dashboard
+      const from = (location.state as any)?.from?.pathname || "/dashboard";
+      navigate(from, { replace: true });
     } catch (error: any) {
       console.error("Failed to complete MFA login:", error);
       setError("Failed to complete login. Please try again.");
@@ -75,10 +90,12 @@ export default function MFAVerifyPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100">
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-indigo-50 via-white to-purple-50 dark:from-slate-900 dark:via-slate-800 dark:to-slate-900">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-          <p className="mt-4 text-gray-600">Verifying authentication...</p>
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mx-auto mb-4"></div>
+          <p className="mt-4 text-slate-600 dark:text-slate-400">
+            Verifying authentication...
+          </p>
         </div>
       </div>
     );
@@ -86,19 +103,19 @@ export default function MFAVerifyPage() {
 
   if (error || !factorId) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100">
-        <div className="bg-white rounded-2xl shadow-xl p-8 max-w-md w-full">
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-indigo-50 via-white to-purple-50 dark:from-slate-900 dark:via-slate-800 dark:to-slate-900">
+        <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl p-8 max-w-md w-full">
           <div className="text-center">
             <div className="text-red-600 text-5xl mb-4">⚠️</div>
-            <h2 className="text-2xl font-bold text-gray-900 mb-2">
+            <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-2">
               Authentication Error
             </h2>
-            <p className="text-gray-600 mb-6">
+            <p className="text-slate-600 dark:text-slate-400 mb-6">
               {error || "Unable to verify MFA status"}
             </p>
             <button
               onClick={() => navigate("/login", { replace: true })}
-              className="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 transition"
+              className="w-full bg-indigo-600 text-white py-3 rounded-lg font-semibold hover:bg-indigo-700 transition"
             >
               Return to Login
             </button>
